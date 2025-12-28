@@ -4,6 +4,8 @@
 import requests
 from bs4 import BeautifulSoup
 import re
+import argparse
+from datetime import datetime, timedelta
 
 def get_news_content(url, headers):
     """从单个新闻页面提取详细内容"""
@@ -278,8 +280,8 @@ def get_news_content(url, headers):
         print(f"提取单个新闻内容时出错 ({url}): {e}")
         return None
 
-def get_latest_xwlb_text():
-    """抓取最新一天的新闻联播文字版，包括每条新闻的详细内容"""
+def get_latest_xwlb_text(target_date=None):
+    """抓取指定日期或最新一天的新闻联播文字版，包括每条新闻的详细内容"""
     base_url = "https://tv.cctv.com"
     list_url = f"{base_url}/lm/xwlb/"
     
@@ -316,6 +318,143 @@ def get_latest_xwlb_text():
             return None
         
         print(f"找到 {len(vide_links)} 个VIDE链接")
+        
+        # 根据目标日期过滤链接（如果提供了目标日期）
+        filtered_links = []
+        if target_date:
+            target_date_str = target_date.strftime("%Y/%m/%d")
+            target_date_url = f"{base_url}/{target_date_str}/"
+            
+            # 1. 先尝试在当前列表页中查找指定日期的链接
+            for link in vide_links:
+                if target_date_str in link:
+                    filtered_links.append(link)
+            
+            # 2. 如果当前列表页中没有找到，尝试多种方式获取历史新闻
+            if not filtered_links:
+                print(f"当前列表页中未找到{target_date.strftime('%Y年%m月%d日')}的新闻链接，尝试其他方式获取...")
+                
+                # 尝试1: 直接构建日期对应的完整新闻链接
+                print("尝试直接构建日期对应的新闻链接...")
+                target_date_num = target_date.strftime("%Y%m%d")
+                
+                # 基于观察到的URL格式模式，构建可能的完整新闻链接
+                # 完整新闻通常以VIDE0开头
+                possible_news_urls = [
+                    # 尝试多种可能的完整新闻链接格式
+                    f"{base_url}/{target_date_str}/VIDE0{target_date_num[-4:]}{target_date_num}*.shtml",
+                    f"{base_url}/{target_date_str}/VIDE0{target_date_num}*.shtml",
+                    f"{base_url}/{target_date_str}/VIDEA{target_date_num[-4:]}{target_date_num}*.shtml",
+                    f"{base_url}/{target_date_str}/VIDEA{target_date_num}*.shtml"
+                ]
+                
+                # 尝试2: 尝试不同的历史新闻列表页URL格式
+                date_list_urls = [
+                    # 正确的历史新闻URL格式，从xwlb_data.js文件中发现
+                    f"{base_url}/lm/xwlb/day/{target_date_num}.shtml",
+                    # 尝试其他可能的格式
+                    f"{base_url}/lm/xwlb/data/index_{target_date_num}.shtml",
+                    f"{base_url}/lm/xwlb/data/{target_date_num}.shtml",
+                    f"{base_url}/lm/xwlb/{target_date_num}.shtml"
+                ]
+                
+                # 先尝试历史新闻列表页
+                for date_list_url in date_list_urls:
+                    if filtered_links:  # 如果已经找到链接，停止尝试
+                        break
+                    
+                    try:
+                        print(f"  尝试访问历史新闻列表页: {date_list_url}")
+                        date_response = requests.get(date_list_url, headers=headers)
+                        
+                        # 检查响应状态
+                        if date_response.status_code != 200:
+                            print(f"  页面访问失败 (状态码: {date_response.status_code})")
+                            continue
+                            
+                        date_response.encoding = "utf-8"
+                        date_soup = BeautifulSoup(date_response.text, "html.parser")
+                        
+                        # 从特定日期的列表页中提取VIDE链接
+                        date_all_links = date_soup.find_all("a", href=True)
+                        for link in date_all_links:
+                            href = link["href"]
+                            if "shtml" in href and "VIDE" in href:
+                                full_href = href if href.startswith("http") else f"{base_url}{href}"
+                                if full_href not in seen:
+                                    seen.add(full_href)
+                                    if target_date_str in full_href:
+                                        filtered_links.append(full_href)
+                        
+                        if filtered_links:
+                            print(f"  从{date_list_url}找到 {len(filtered_links)} 个{target_date.strftime('%Y年%m月%d日')}的VIDE链接")
+                            break
+                            
+                    except Exception as e:
+                        print(f"  访问{date_list_url}时出错: {e}")
+                        continue
+                
+                # 如果还是没找到，直接检查日期目录下的内容
+                if not filtered_links:
+                    print("尝试检查日期目录下的内容...")
+                    # 尝试访问日期目录页
+                    date_dir_url = f"{base_url}/{target_date_str}/"
+                    try:
+                        response = requests.get(date_dir_url, headers=headers)
+                        if response.status_code == 200:
+                            soup = BeautifulSoup(response.text, "html.parser")
+                            all_links = soup.find_all("a", href=True)
+                            for link in all_links:
+                                href = link["href"]
+                                if "shtml" in href and "VIDE" in href:
+                                    full_href = href if href.startswith("http") else f"{base_url}{href}"
+                                    if full_href not in seen:
+                                        seen.add(full_href)
+                                        if target_date_str in full_href:
+                                            filtered_links.append(full_href)
+                    except Exception as e:
+                        print(f"访问日期目录时出错: {e}")
+            
+            # 如果还是没找到，尝试直接构建单个新闻链接（不依赖列表页）
+            if not filtered_links:
+                print(f"尝试直接构建{target_date.strftime('%Y年%m月%d日')}的单个新闻链接...")
+                
+                # 根据观察到的URL格式，构建可能的新闻链接目录并尝试获取内容
+                # 注意：由于URL中包含随机字符，无法直接构建完整链接
+                # 但我们可以尝试从日期目录获取所有链接
+                date_news_dir = f"{base_url}/{target_date_str}/"
+                try:
+                    # 直接请求日期目录，查看是否有可用的新闻链接
+                    dir_response = requests.get(date_news_dir, headers=headers)
+                    if dir_response.status_code == 200:
+                        dir_soup = BeautifulSoup(dir_response.text, "html.parser")
+                        
+                        # 查找所有链接，筛选出包含VIDE的新闻链接
+                        all_news_links = dir_soup.find_all("a", href=True)
+                        for link in all_news_links:
+                            href = link["href"]
+                            if "shtml" in href and "VIDE" in href:
+                                full_href = href if href.startswith("http") else f"{base_url}{href}"
+                                if full_href not in seen:
+                                    seen.add(full_href)
+                                    filtered_links.append(full_href)
+                except Exception as e:
+                    print(f"访问日期新闻目录时出错: {e}")
+            
+            if not filtered_links:
+                print(f"未找到{target_date.strftime('%Y年%m月%d日')}的新闻链接")
+                print(f"提示：")
+                print(f"1. 当前列表页只包含{vide_links[0][20:30]}左右的最新新闻")
+                print(f"2. CCTV网站可能不提供通过直接URL访问历史新闻的功能")
+                print(f"3. 网站可能有防爬机制，限制自动化访问历史新闻")
+                print(f"4. 您可以尝试：")
+                print(f"   - 手动访问CCTV新闻联播页面寻找历史新闻")
+                print(f"   - 使用当前日期或最近日期的新闻")
+                print(f"   - 检查网络连接或尝试使用不同的网络环境")
+                return None
+            
+            print(f"找到 {len(filtered_links)} 个{target_date.strftime('%Y年%m月%d日')}的VIDE链接")
+            vide_links = filtered_links
         
         # 获取最新的新闻联播完整视频链接
         latest_news_url = None
@@ -372,30 +511,49 @@ def get_latest_xwlb_text():
         # 6. 生成大纲内容
         outline_content = ""
         if outline_items:
-            outline_content = "\n".join([f"{i+1}. {title}" for i, title in enumerate(outline_items)])
+            outline_content = "\n".join([f"- {title}" for i, title in enumerate(outline_items)])
         
         # 7. 组合最终内容
         print("\n组合最终内容...")
         
         # 先添加标题（使用Markdown一级标题）
-        final_content = f"# {title}\n\n"
-        
-        # 添加大纲（使用Markdown二级标题）
+        # 清理标题，确保它是用户要求的格式：YYYY年MM月DD日新闻联播划重点｜
+        date_str = ""
+        # 优先使用用户提供的日期
+        if target_date:
+            date_str = target_date.strftime("%Y年%m月%d日")
+        else:
+            # 尝试从URL中提取日期信息（URL格式更一致）
+            date_match = re.search(r'(\d{4})/(\d{2})/(\d{2})', latest_news_url)
+            if date_match:
+                # 格式化为YYYY年MM月DD日格式
+                date_str = f"{date_match.group(1)}年{date_match.group(2)}月{date_match.group(3)}日"
+            else:
+                # 如果URL中没有找到日期，尝试从标题中提取
+                date_match = re.search(r'(\d{4})(\d{2})(\d{2})', title)
+                if date_match:
+                    date_str = f"{date_match.group(1)}年{date_match.group(2)}月{date_match.group(3)}日"
+        # 在开头添加图片
+        final_content = f"![](https://files.mdnice.com/user/158914/f297f420-0530-4a26-8d81-0644824ee6e0.jpg)\n\n"
+        # 生成用户要求的标题格式
+        clean_main_title = f"{date_str}新闻联播划重点｜｜｜｜" if date_str else "新闻联播划重点｜｜｜｜"
+        final_content += f"{clean_main_title}\n\n"
+        # 添加大纲（使用Markdown五级标题）
         if outline_content:
-            final_content += "## 新闻大纲\n"
+            final_content += "# 新闻大纲\n"
             final_content += outline_content
             final_content += "\n\n"
         
-        # 再添加每个新闻的详细内容（使用Markdown二级标题）
+        # 再添加每个新闻的详细内容（使用Markdown五级标题）
         if detailed_news:
-            final_content += "## 详细新闻内容\n\n"
+            final_content += "# 详细新闻\n\n"
             
             for i, news in enumerate(detailed_news):
                 # 清理标题，去除[视频]前缀
                 clean_title = re.sub(r"^\[视频\]", "", news['title']).strip()
                 
-                # 使用Markdown三级标题
-                final_content += f"### {clean_title}\n"
+                # 使用Markdown六级标题
+                final_content += f"## {clean_title}\n"
                 
                 # 特殊处理联播快讯
                 if "联播快讯" in clean_title:
@@ -412,8 +570,8 @@ def get_latest_xwlb_text():
                             if not title_part:
                                 title_part = "新闻快讯"
                             
-                            # 使用Markdown四级标题
-                            final_content += f"#### {title_part}\n"
+                            # 使用Markdown七级标题
+                            final_content += f"### {title_part}\n"
                             
                             # 输出内容部分
                             if content_part:
@@ -458,8 +616,8 @@ def get_latest_xwlb_text():
                             if not title_part:
                                 title_part = "新闻快讯"
                             
-                            # 使用Markdown四级标题
-                            final_content += f"#### {title_part}\n"
+                            # 使用Markdown三级标题
+                            final_content += f"# {title_part}\n"
                             
                             # 只输出item中除标题外的内容部分
                             if title_part in item:
@@ -551,16 +709,16 @@ def save_to_file(data, filename=None):
     # 直接使用get_latest_xwlb_text函数生成的Markdown格式内容
     content = data['content']
     
-    # 从标题中提取日期（格式：20251226）
-    title = data.get('title', '')
-    date_match = re.search(r'\d{8}', title)
+    # 从内容中提取日期（格式：YYYY年MM月DD日）
+    content = data['content']
+    date_match = re.search(r'(\d{4}年\d{2}月\d{2}日)', content)
     
     if date_match:
-        date_str = date_match.group(0)
-        filename = f"xwlb_{date_str}.txt"
+        date_str = date_match.group(1)
+        filename = f"{date_str}新闻联播划重点.txt"
     else:
-        # 如果没有从标题中提取到日期，使用默认文件名
-        filename = "latest_xwlb.txt"
+        # 如果没有从内容中提取到日期，使用默认文件名
+        filename = "新闻联播划重点.txt"
     
     # 1. 写入文件
     with open(filename, "w", encoding="utf-8") as f:
@@ -569,8 +727,20 @@ def save_to_file(data, filename=None):
     print(f"\n新闻内容已保存到文件: {filename}")
 
 if __name__ == "__main__":
-    print("开始抓取最新一天的新闻联播文字版...")
-    xwlb_data = get_latest_xwlb_text()
+    parser = argparse.ArgumentParser(description="抓取指定日期的新闻联播文字版")
+    parser.add_argument("--date", help="指定日期（格式：YYYYMMDD），默认抓取最新日期", type=str)
+    args = parser.parse_args()
+    
+    target_date = None
+    if args.date:
+        try:
+            target_date = datetime.strptime(args.date, "%Y%m%d")
+        except ValueError:
+            print("日期格式错误，请使用YYYY-MM-DD格式")
+            exit(1)
+    
+    print("开始抓取新闻联播文字版..." + (f"（日期：{target_date.strftime('%Y年%m月%d日')}）" if target_date else "（最新日期）"))
+    xwlb_data = get_latest_xwlb_text(target_date)
     if xwlb_data:
         save_to_file(xwlb_data)
         print("\n抓取完成！")
