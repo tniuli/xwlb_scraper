@@ -517,7 +517,7 @@ def get_latest_xwlb_text(target_date=None):
         print("\n组合最终内容...")
         
         # 先添加标题（使用Markdown一级标题）
-        # 清理标题，确保它是用户要求的格式：YYYY年MM月DD日新闻联播划重点｜
+        # 清理标题，确保它是用户要求的格式：YYYY年MM月DD日新闻联播文字版｜
         date_str = ""
         # 优先使用用户提供的日期
         if target_date:
@@ -536,7 +536,7 @@ def get_latest_xwlb_text(target_date=None):
         # 在开头添加图片
         final_content = f"![](https://files.mdnice.com/user/158914/f297f420-0530-4a26-8d81-0644824ee6e0.jpg)\n\n"
         # 生成用户要求的标题格式
-        clean_main_title = f"{date_str}新闻联播划重点｜｜｜｜" if date_str else "新闻联播划重点｜｜｜｜"
+        clean_main_title = f"{date_str}新闻联播文字版｜｜｜｜" if date_str else "新闻联播文字版｜｜｜｜"
         final_content += f"{clean_main_title}\n\n"
         # 添加大纲（使用Markdown五级标题）
         if outline_content:
@@ -715,10 +715,10 @@ def save_to_file(data, filename=None):
     
     if date_match:
         date_str = date_match.group(1)
-        filename = f"{date_str}新闻联播划重点.txt"
+        filename = f"{date_str}新闻联播文字版.txt"
     else:
         # 如果没有从内容中提取到日期，使用默认文件名
-        filename = "新闻联播划重点.txt"
+        filename = "新闻联播文字版.txt"
     
     # 1. 写入文件
     with open(filename, "w", encoding="utf-8") as f:
